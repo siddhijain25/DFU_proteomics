@@ -1,4 +1,3 @@
 # DFU_proteomics
 
-testt
-yesy
+This repository is made in connection with my master thesis
