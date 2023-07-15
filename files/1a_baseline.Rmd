@@ -1,0 +1,376 @@
+---
+title: "1a"
+output: html_document
+date: "2023-05-26"
+---
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# This file combines information from baseline, new_baseline, and charcot
+# It also creates all plots for EDA
+
+```{r libraries}
+require("dplyr")
+require("tidyr")
+require("tidyverse")
+require("readxl")
+require("readr")
+require("tibble")
+require("xlsx")
+require("ggplot2")
+require("purrr")
+require("rtables")
+
+save.data = F
+save.plots = T
+```
+
+```{r importing data files}
+data_baseline <- read_excel("data/Baseline_data_MicroPredict.xlsx")
+
+data_new_baseline <- data.frame(read_excel("data/new_baseline.xlsx") %>% 
+  dplyr::rename(.,ID_Nr = "idnr") %>% 
+  transform(., ID_Nr = as.numeric(ID_Nr)) %>%
+  dplyr::select(c('ID_Nr','UALBCREA_labka_vaerdi','EGFR_labka_vaerdi', 
+           'SYSBTHTLIG_labka_vaerdi', 'SYSBTVTLIG_labka_vaerdi', 
+           'SYSBTHARMLIG_labka_vaerdi', 'SYSBTVARMLIG_labka_vaerdi')))# %>% 
+#  sapply(., function(x) as.numeric(as.character(x))))
+
+data_cpr <- read_tsv("data/cpr_id_key_MicroPredict.txt",
+                     show_col_types = FALSE) %>% 
+  dplyr::rename(.,c(CPR_nr = "cprnr",ID_Nr = "idnr")) %>% 
+  transform(., ID_Nr = as.numeric(ID_Nr))
+
+data_charcot <- read_tsv("data/cpr_184_charcot_sdcc.txt",
+                     show_col_types = FALSE) %>% 
+  dplyr::rename(.,CPR_nr = "Cpr. nr.")
+```
+
+```{r preprocessing data}
+joined_table <- left_join(data_baseline, data_cpr, by = "ID_Nr") %>%            #left joining cpr data
+  mutate(Charcot = if_else(CPR_nr %in% data_charcot$CPR_nr, 1, 2)) %>%          #adding charcot foot
+  left_join(., data_new_baseline, by = "ID_Nr") %>%                             #left joining new baseline
+  mutate(Albuminuria = cut(as.numeric(UALBCREA_labka_vaerdi),                   #binning UACR values for albuminaria
+                           breaks = c(0, 30, 300, Inf), 
+                           labels = c("A1", "A2", "A3"), 
+                           include.lowest = TRUE)) %>%
+  mutate(Renal_func = cut(as.numeric(EGFR_labka_vaerdi),                        #binning eGFR values
+                          breaks = c(0, 15, 30, 45, 60, 90, Inf), 
+                          labels = c("G5", "G4", "G3b", "G3a", "G2", "G1"))) %>%
+  
+  #calculating TBI (Toe Brachial Index)  https://viasonix.com/vascular-angiology/toe-brachial-index-tbi/
+  
+  mutate(SYSBTHARMLIG_labka_vaerdi = tidyr::replace_na(as.numeric(SYSBTHARMLIG_labka_vaerdi), 0),
+         SYSBTVARMLIG_labka_vaerdi = tidyr::replace_na(as.numeric(SYSBTVARMLIG_labka_vaerdi), 0),
+         SYSBTVTLIG_labka_vaerdi = as.character(SYSBTVTLIG_labka_vaerdi),       #replacing invalid values
+         SYSBTHTLIG_labka_vaerdi = as.character(SYSBTHTLIG_labka_vaerdi)) %>%
+  mutate(SYSBTVTLIG_labka_vaerdi = case_when(SYSBTVTLIG_labka_vaerdi == "<10" ~ 9,
+                                             is.na(SYSBTVTLIG_labka_vaerdi) ~ 0,
+                                             TRUE ~ as.numeric(SYSBTVTLIG_labka_vaerdi)),
+         SYSBTHTLIG_labka_vaerdi = case_when(is.na(SYSBTHTLIG_labka_vaerdi) ~ 0,
+                                             SYSBTHTLIG_labka_vaerdi == "ampu" ~ 0,
+                                             TRUE ~ as.numeric(SYSBTHTLIG_labka_vaerdi))) %>%
+  mutate(SYSBTHARMLIG_labka_vaerdi = as.integer(SYSBTHARMLIG_labka_vaerdi),
+         SYSBTVARMLIG_labka_vaerdi = as.integer(SYSBTVARMLIG_labka_vaerdi),
+         SYSBTVTLIG_labka_vaerdi = as.integer(SYSBTVTLIG_labka_vaerdi),
+         SYSBTHTLIG_labka_vaerdi = as.integer(SYSBTHTLIG_labka_vaerdi)) %>%
+  mutate(LTBI = if_else(SYSBTHARMLIG_labka_vaerdi > SYSBTVARMLIG_labka_vaerdi,  #Left TBI
+                        SYSBTVTLIG_labka_vaerdi / SYSBTHARMLIG_labka_vaerdi,    
+                        SYSBTVTLIG_labka_vaerdi / SYSBTVARMLIG_labka_vaerdi),
+         RTBI = if_else(SYSBTHARMLIG_labka_vaerdi > SYSBTVARMLIG_labka_vaerdi,  #Right TBI
+                        SYSBTHTLIG_labka_vaerdi / SYSBTHARMLIG_labka_vaerdi,
+                        SYSBTHTLIG_labka_vaerdi / SYSBTVARMLIG_labka_vaerdi)) %>%
+  mutate(avg_TBI = (LTBI + RTBI) / 2,                                           #Average TBI
+         avg_TBI = if_else(is.infinite(avg_TBI), NA, avg_TBI)) %>%
+  mutate(TBI_class = cut(avg_TBI, breaks = c(0, 0.64, 100),                     #TBI classification
+                         labels = c("Abnormal", "Normal"))) 
+```
+
+```{r saving as xlsx}
+joined_table_final <- joined_table %>% 
+  dplyr::select("ID_Nr","Healing_time",	"Healing", "Days_to_heal",	#"Insulin", 
+         "Diabetes_Type",	"Gender", "Age",	"Diabetes_Duration", 
+         "BMI",	"HBA1C",	"avg_TBI", "Triglyceride") 
+ 
+if(save.data) write.xlsx(as.data.frame(joined_table_final), 
+                         "output_files/data/1a_joined_baseline.xlsx", 
+                         row.names = FALSE)
+```
+
+
+```{r}
+s_summary <- function(x) {
+  if (is.numeric(x)) {
+    in_rows(
+      "n" = rcell(sum(!is.na(x)), format = "xx"),
+      "Mean (sd)" = rcell(c(mean(x, na.rm = TRUE), sd(x, na.rm = TRUE)), format = "xx.xx (xx.xx)"),
+      "IQR" = rcell(IQR(x, na.rm = TRUE), format = "xx.xx"),
+      "min - max" = rcell(range(x, na.rm = TRUE), format = "xx.xx - xx.xx"),
+      "median" = rcell(median(x, na.rm = TRUE), format = "xx.xx")
+      
+    )
+  } else if (is.factor(x)) {
+    vs <- as.list(table(x))
+    do.call(in_rows, lapply(vs, rcell, format = "xx"))
+  } else {
+    stop("type not supported")
+  }
+}
+```
+
+```{r}
+set.seed(123)
+summary_data <- joined_table_final %>% 
+  mutate(Days_to_heal = replace(Days_to_heal, 
+                                     is.na(Days_to_heal),                       #replacing NA values with random value
+                                     sample(seq(180, 250, 1),                   #between 180 and 250
+                                            sum(is.na(Days_to_heal)), 
+                                            replace = TRUE)))
+  
+  
+  
+summary_lyt <- basic_table(show_colcounts = TRUE) %>%
+  split_cols_by(var = "Healing_time") %>%
+  analyze(c("Days_to_heal",	#"Insulin", 
+         "Diabetes_Type",	"Gender", "Age",	"Diabetes_Duration", 
+         "BMI",	"HBA1C",	"avg_TBI", "Triglyceride"), afun = s_summary)
+
+summary_tbl <- build_table(summary_lyt, summary_data)
+summary_tbl 
+```
+```{r baseline stats}
+shapiro.test(summary_data$Age)
+kruskal.test(Age ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$BMI)
+kruskal.test(BMI ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$Diabetes_Duration)
+kruskal.test(Diabetes_Duration ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$Days_to_heal)
+kruskal.test(Days_to_heal ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$HBA1C)
+kruskal.test(HBA1C ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$avg_TBI)
+kruskal.test(avg_TBI ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$Triglyceride)
+kruskal.test(Triglyceride ~ Healing_time , data = summary_data)
+
+shapiro.test(summary_data$Gender)
+chisq.test(summary_data$Gender,summary_data$Healing_time)
+
+shapiro.test(summary_data$Diabetes_Type)
+chisq.test(summary_data$Diabetes_Type,summary_data$Healing_time)
+```
+
+
+```{r changing data types}
+joined_table <- joined_table %>% 
+  mutate_at(c('Healing_time', "Healing", "Amputation", "Lost_to_follow_up", 
+              "Diagnosis_Code", "Wound_Placement", "Oral_Medication", "Insulin",
+              "Diabetes_Type", "Gender", "Charcot", "Albuminuria", 
+              "Renal_func","TBI_class"), as.factor) 
+```
+
+```{r renaming factors}
+joined_table <- joined_table %>%
+  mutate(Healing_time = as.factor(case_when(
+    Healing_time %in% c(1, 2, 3) ~ c("Fast-healing", "Slow-healing", "Chronic")[Healing_time],
+    TRUE ~ Healing_time)),
+    Healing = as.factor(case_when(
+      Healing %in% c(1, 2) ~ c("Healing", "Non-healing")[Healing],
+    TRUE ~ Healing)),
+    Amputation = as.factor(case_when(
+      Amputation %in% c(1, 2) ~ c("Yes", "No")[Amputation],
+    TRUE ~ Amputation)),
+    Lost_to_follow_up = as.factor(case_when(
+      Lost_to_follow_up %in% c(1, 2) ~ c("Yes", "No")[Lost_to_follow_up],
+    TRUE ~ Lost_to_follow_up)),
+    Diagnosis_Code = as.factor(case_when(
+      Diagnosis_Code %in% c(1, 2, 3) ~ c("DL979A", "DL979C", "DL979E")[Diagnosis_Code],
+    TRUE ~ Diagnosis_Code)),
+    Wound_Placement = as.factor(case_when(
+      Wound_Placement %in% c(1, 2, 3, 4, 5) ~ c("Fodsål", "Hæl", "Tå", "Fodryg", "Ankel")[Wound_Placement],
+    TRUE ~ Wound_Placement)),
+    Oral_Medication = as.factor(case_when(
+      Oral_Medication %in% c(1, 2) ~ c("Yes", "No")[Oral_Medication],
+    TRUE ~ Oral_Medication)),
+    Insulin = as.factor(case_when(
+      Insulin %in% c(1, 2) ~ c("Yes", "No")[Insulin],
+    TRUE ~ Insulin)),
+    Diabetes_Type = as.factor(case_when(
+      Diabetes_Type %in% c(1, 2) ~ c("Type 1", "Type 2")[Diabetes_Type],
+    TRUE ~ Diabetes_Type)),
+    Gender = as.factor(case_when(
+      Gender %in% c(1, 2) ~ c("Male", "Female")[Gender],
+    TRUE ~ Gender)))
+
+# Reordering Healing_time factor for aesthetics
+joined_table$Healing_time <- factor(joined_table$Healing_time,
+                                    levels = c("Fast-healing", "Slow-healing", "Chronic"))
+
+```
+
+
+```{r}
+#https://finalfit.org/articles/finalfit.html
+require("finalfit")
+
+joined_table_finalfit <- joined_table %>% 
+  mutate(Days_to_heal_cox = replace(Days_to_heal, 
+                                     is.na(Days_to_heal),                       #replacing NA values with random value
+                                     sample(seq(180, 250, 1),                   #between 180 and 250
+                                            sum(is.na(Days_to_heal)), 
+                                            replace = TRUE)))
+
+ex <- c("Age", "Gender","Insulin", 
+         "Diabetes_Type",	"Diabetes_Duration", 
+         "BMI",	"HBA1C",	"avg_TBI", "Triglyceride", "Albuminuria")
+dep <- "Healing_time"
+joined_table_finalfit %>% 
+  summary_factorlist(dep, ex, 
+                     na_include=F, na_include_dependent = TRUE, 
+                     total_col = TRUE, add_col_totals = TRUE, p=TRUE)-> t   #, cont = "median"
+knitr::kable(t, row.names=FALSE, align=c("l", "l", "r", "r", "r", "r", "r"))
+
+
+
+ex <- c("Age", "Gender","Insulin", 
+         "Diabetes_Type",	"Diabetes_Duration", 
+         "BMI",	"HBA1C",	"avg_TBI", "Triglyceride", "Albuminuria")
+dep <- "Surv(Days_to_heal_cox)"
+joined_table_finalfit %>% 
+  finalfit(dep, ex, metrics=TRUE)-> t
+knitr::kable(t[[1]], row.names=FALSE, align=c("l", "l", "r", "r", "r", "r"))
+knitr::kable(t[[2]], row.names=FALSE, col.names="")
+
+
+ex <- c("Insulin",
+              "Diabetes_Type", "Gender", "Charcot", "Albuminuria", 
+              "Renal_func","TBI_class")
+dep <- "Surv(Days_to_heal_cox)"
+joined_table_finalfit %>% 
+  hr_plot(dep, ex, dependent_label = "Survival")
+```
+
+```{r EDA plots 1}
+# Bar plots for all categorical variables
+factor_cols <- joined_table %>% select_if(is.factor)
+
+plots <- map(colnames(factor_cols), ~ ggplot(factor_cols,                       #map over factor columns
+                                             aes(x = .data[[.x]],
+                                                 fill = .data[[.x]])) +
+               geom_bar() +
+               geom_text(stat = 'count',                                        #adding count label to bars
+                         aes(label = ..count..), 
+                         vjust = -0.5) +
+               labs(title = paste("Value Count Barplot for", .x)) +             #title
+               guides(fill = "none"))                                           #removing legend
+
+# Save the plots with names according to the column names
+if(save.plots) walk2(colnames(factor_cols), plots, ~ ggsave(
+  filename = paste0("output_files/figures/1a/1_barplot_", .x, ".png"),
+  plot = .y,
+  width = 10, 
+  height = 7)) 
+ # device='tiff', 
+#  dpi=700))
+```
+
+```{r EDA plots 2}
+# Boxplots for numerical variables, categorized by healing type
+numeric_cols <- joined_table %>% dplyr::select(c("Wound_Volume_mm3", "Wound_Areal_mm2",
+              "Healed_pr_day_mm2", "Days_to_heal","Age", "Diabetes_Duration", 
+              "Cobalamin", "BMI", "C_Peptid", "eGFR", "DUALB", "GFR", 
+              "Hemoglobin", "HBA1C", "HDL", "Height","LDL","P_Creatinine",
+              "Triglyceride", "Urin_Albumin_Creatinine_Ratio", "Weight",
+              "SYSBTHALIG", "SYSBTHTLIG", "SYSBTVALIG", "SYSBTVTLIG", 
+              "Ankle_pressure_average", "Toe_pressure_average"))
+
+plots <- map(colnames(numeric_cols), ~ ggplot(joined_table,                     #map over numeric columns
+                                      aes(x = Healing_time,
+                                          y = .data[[.x]],
+                                          fill = Healing_time)) +
+       geom_boxplot() +
+         theme_bw() +
+       xlab("Healing category") +                                               #renaming x axis
+       #labs(title = paste("Boxplots for", .x, "categorized by Healing type")) + #title
+       guides(fill = "none"))                                                   #removing legend
+
+# Save the plots with names according to the column names
+if(save.plots) walk2(colnames(numeric_cols), plots, ~ ggsave(
+  filename = paste0("output_files/figures/1a/2_boxplot_", .x, ".png"), 
+  plot = .y,
+  width = 7.5,
+  height = 4.5)) 
+ # device='tiff', 
+#  dpi=700))
+```
+
+```{r EDA plots 3}
+# Barplots for categorical variables, categorized by healing type
+create_plot <- function(data, col) {
+  df_grouped <- data %>%
+    group_by(Healing_time, .data[[col]]) %>%
+    summarise(count = n()) %>%
+    ungroup()
+
+  plot <- ggplot(df_grouped, aes(x = Healing_time, y = count, fill = .data[[col]])) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(title = paste("Value Count Barplot for", col, "by Healing Type"),
+         x = "Healing type",
+         y = "Count") +
+    theme(axis.text.x = element_text(angle = 0))
+
+  plot_with_labels <- plot +
+    geom_text(aes(label = count), position = position_dodge(width = 0.9), vjust = -0.5)
+
+  return(plot_with_labels)
+}
+
+# Map over columns and create plots
+plots <- map(colnames(factor_cols)[-1], ~ create_plot(factor_cols, .x))
+
+# Save the plots with names according to the column names
+if(save.plots) walk2(colnames(factor_cols)[-1], plots, ~ ggsave(
+  filename = paste0("output_files/figures/1a/3_barplot_healingtime_vs_", .x, ".png"), 
+  plot = .y,
+  width = 10, 
+  height = 7)) 
+ # device='tiff', 
+#  dpi=700))
+```
+
+```{r EDA plots 4}
+#Scatterplot of area of wound and days to heal
+plot <- ggplot(joined_table, aes(x = Days_to_heal, 
+                                 y = Wound_Areal_mm2, 
+                                 colour = Healing_time)) +
+  geom_point() +
+  labs(title = "Area of wound and healing time in days for fast and slow healers")
+if(save.plots) ggsave(plot, 
+                      filename = "output_files/figures/1a/4_scatter_area_of_wound.png",
+                      width = 10, 
+                      height = 7, 
+                      device='tiff', 
+                      dpi=700)
+
+#Scatter plot of volume of wound and days to heal
+plot <- ggplot(joined_table, aes(x = Days_to_heal, 
+                                 y = Wound_Volume_mm3, 
+                                 colour = Healing_time)) +
+  geom_point() +
+  labs(title = "Volume of wound and healing time in days for fast and slow healers")
+if(save.plots) ggsave(plot, 
+                      filename = "output_files/figures/1a/4_scatter_volume_of_wound.png",
+                      width = 10, 
+                        height = 7) 
+ # device='tiff', 
+#  dpi=700))
+```
+

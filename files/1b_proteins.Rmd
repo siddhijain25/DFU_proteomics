@@ -1,0 +1,58 @@
+---
+title: "2a"
+output: html_document
+date: "2023-05-26"
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+
+```{r libraries}
+require("dplyr")
+require("tidyr")
+require("tidyverse")
+require("readxl")
+require("readr")
+require("tibble")
+require("xlsx")
+require("ggplot2")
+require("purrr")
+require("reshape2")
+require("sjmisc")
+
+save.data = F
+save.plots = F
+```
+
+```{r importing data files}
+data_original <- read_tsv("C:/Users/SJAI0003/Desktop/Siddhi_master_project/Proteomics_MaxQuant_RUC/all_files_proteomics/txt/proteinGroups.txt")
+```
+
+```{r}
+data_original_plot <- data_original %>% 
+  dplyr::select(ProteinID="Protein IDs", starts_with("LFQ intensity")) %>% 
+  rename_all(gsub, pattern="LFQ intensity ", replacement="") %>% 
+  melt(id="ProteinID") %>% 
+  rename("ID" = variable, "LFQ" = value) %>% 
+  mutate(LFQ = as.integer(LFQ))
+```
+
+```{r}
+data_original_plot %>%
+  summarize(missing_percentage = mean(is.na(LFQ) | LFQ == 0) * 100)
+```
+
+```{r}
+ggplot(data_original_plot, aes(x = LFQ, after_stat(count), colour = ID)) +
+  geom_density() +
+  theme(legend.position = "none")
+```
+
+```{r}
+ggplot(data_original_plot, aes(x = LFQ, after_stat(count), colour = ProteinID)) +
+  geom_density() +
+  theme(legend.position = "none")
+```
+

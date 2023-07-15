@@ -1,0 +1,74 @@
+---
+title: "3a"
+output: html_document
+date: "2023-06-22"
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+
+```{r libraries}
+require("dplyr")
+require("tidyr")
+require("tidyverse")
+require("readxl")
+require("readr")
+require("tibble")
+require("xlsx")
+require("ggplot2")
+require("purrr")
+require("reshape2")
+require("sjmisc")
+require("robCompositions")
+require("zCompositions")
+
+save.data = F
+save.plots = F
+
+set.seed(123)
+```
+
+```{r importing data files}
+data_proteins <- read_tsv("data/proteinGroups.txt")
+data_baseline <- read_excel("output_files/data/1a_joined_baseline.xlsx")
+```
+
+```{r}
+set.seed(123)
+protein_data_modified <- data_proteins %>% 
+  dplyr::select(ProteinID="Protein IDs", starts_with("LFQ intensity")) %>% 
+  dplyr::rename_all(gsub, pattern="LFQ intensity ", replacement="") %>% 
+  rotate_df(cn=TRUE) %>% #, rn='ID_Nr'
+  dplyr::select(where(~ any(. != 0))) %>% 
+  cmultRepl(method = "SQ") %>% 
+  cenLR()
+
+#test <- cenLRinv(protein_data_modified)
+
+protein_data_modified <- rownames_to_column(protein_data_modified$x.clr, "ID_Nr") %>%
+  filter(ID_Nr != 81) %>%                                                       #removing 81 and replacing it with 81_RRJ
+  mutate_all(funs(str_replace(., "81_RRJ", "81"))) %>%                          # (Rosa's version)
+  mutate(ID_Nr= as.integer(ID_Nr))
+```
+
+```{r joining data}
+joined_data <- data_baseline %>% 
+  inner_join(protein_data_modified, by = "ID_Nr") %>% 
+  mutate_if(is.character, as.numeric)
+
+if(save.data) write.xlsx(as.data.frame(joined_data), 
+                         "output_files/data/3a_CLR_data.xlsx", 
+                         row.names = FALSE)
+```
+
+```{r}
+data(expenditures)
+eclr <- cenLR(expenditures)
+inveclr <- cenLRinv(eclr)
+head(expenditures)
+head(inveclr)
+head(pivotCoordInv(eclr$x.clr))
+```
+
