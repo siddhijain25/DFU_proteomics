@@ -1,0 +1,171 @@
+---
+title: "4b"
+output: html_document
+date: "2023-06-22"
+---
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r libraries}
+require("dplyr")
+require("tidyr")
+require("tidyverse")
+require("readxl")
+require("readr")
+require("tibble")
+require("xlsx")
+require("ggplot2")
+require("purrr")
+require("reshape2")
+require("broom")
+require("gridExtra")
+require("data.table")
+require("ggpubr")
+
+save.data = T
+save.plots = T
+
+set.seed(123)
+```
+
+```{r}
+perseus <- read_excel("output_files/data/243_2b_cox_adjusted.xlsx")
+clr <- read_excel("output_files/data/243_3b_cox_adjusted.xlsx")
+mice <- read_excel("output_files/data/243_4b_cox_adjusted.xlsx")
+```
+
+```{r}
+common_proteins_243 <- readRDS("output_files/data/common_243.rds")
+```
+
+```{r}
+perseus_common <- perseus %>% 
+  filter(term %in% common_proteins_243) %>% 
+  select(term, estimate ,p.value ,p.value.adjusted) %>%
+  group_by(term) %>%                               #to remove duplicates and keep gene with lower p value
+  filter(p.value.adjusted == min(p.value.adjusted)) %>%
+  arrange(term)
+
+clr_common <- clr %>% 
+  filter(term %in% common_proteins_243) %>% 
+  select(term, estimate,p.value ,p.value.adjusted) %>% 
+  group_by(term) %>%                               #to remove duplicates and keep gene with lower p value
+  filter(p.value.adjusted == min(p.value.adjusted)) %>%
+  arrange(term)
+
+mice_common <- mice %>% 
+  filter(term %in% common_proteins_243) %>% 
+  select(term, estimate,p.value , p.value.adjusted) %>% 
+  group_by(term) %>%                               #to remove duplicates and keep gene with lower p value
+  filter(p.value.adjusted == min(p.value.adjusted)) %>%
+  arrange(term)
+```
+
+```{r}
+# Perform the first merge
+merged_df <- merge(perseus_common, clr_common, by = "term", suffixes = c("_perseus", "_clr"))
+
+# Perform the second merge
+merged_df <- merge(merged_df, mice_common, by = "term")
+```
+
+```{r pval plots}
+plot <- ggplot(merged_df, aes(x = p.value.adjusted_perseus, y = p.value.adjusted)) +
+  geom_point() +
+  geom_smooth() +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = bquote("P"[FDR]*" (Perseus workflow)"), y = bquote("P"[FDR]*" (MICE workflow)"), title = "Scatter Plot of p-values") +
+  theme_minimal()
+if(save.plots) ggsave(file = paste0("output_files/figures/others/pval_perseus_mice.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+
+plot <- ggplot(merged_df, aes(x = p.value.adjusted_perseus, y = p.value.adjusted_clr)) +
+  geom_point() +
+  geom_smooth() +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = bquote("P"[FDR]*" (Perseus workflow)"), y = bquote("P"[FDR]*" (cmulRepl workflow)"), title = "Scatter Plot of p-values") +
+  theme_minimal()
+if(save.plots) ggsave(file = paste0("output_files/figures/others/pval_perseus_cmultrepl.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+
+plot <- ggplot(merged_df, aes(x = p.value.adjusted_clr, y = p.value.adjusted)) +
+  geom_point() +
+  geom_smooth() +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = bquote("P"[FDR]*" (cmulRepl workflow)"), y = bquote("P"[FDR]*" (MICE workflow)"), title = "Scatter Plot of p-values") +
+  theme_minimal()
+if(save.plots) ggsave(file = paste0("output_files/figures/others/pval_cmultrepl_mice.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+```
+
+```{r hazard ratio plots}
+plot <- ggplot(merged_df, aes(x = exp(estimate_perseus), y = exp(estimate))) +
+  geom_point() +
+  geom_smooth() +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = "Hazard ratio (Workflow 1)", y = "Hazard ratio (Workflow 3)") +
+  theme_bw()
+if(save.plots) ggsave(file = paste0("output_files/figures/others/haz_perseus_mice.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+ggsave(plot,
+       filename = "output_files/figures/others/haz_perseus_mice.png",
+       width = 7.5, 
+       height = 4.5)
+
+plot <- ggplot(merged_df, aes(x = exp(estimate_perseus), y = exp(estimate_clr))) +
+  geom_point() +
+  geom_smooth()  +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = "Hazard ratio (Workflow 1)", y = "Hazard ratio (Workflow 2)") +
+  theme_bw()
+if(save.plots) ggsave(file = paste0("output_files/figures/others/haz_perseus_cmultrepl.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+ggsave(plot,
+       filename = "output_files/figures/others/haz_perseus_cmultrepl.png",
+       width = 7.5, 
+       height = 4.5)
+
+plot <- ggplot(merged_df, aes(x = exp(estimate_clr), y = exp(estimate))) +
+  geom_point() +
+  geom_smooth() +
+  stat_cor(method = "spearman", colour = "red") +
+  labs(x = "Hazard ratio (Workflow 2)", y = "Hazard ratio (Workflow 3)") +
+  theme_bw() 
+if(save.plots) ggsave(file = paste0("output_files/figures/others/haz_cmultrepl_mice.png"),
+                                      plot,
+                                      width = 10,
+                                      height = 7,
+                                      device='tiff',
+                                      dpi=700)
+ggsave(plot,
+       filename = "output_files/figures/others/haz_cmultrepl_mice.png",
+       width = 7.5, 
+       height = 4.5)
+```
+
+```{r}
+merged_df %>% 
+  filter(p.value_perseus < 0.05, p.value_clr < 0.05, p.value < 0.05)
+```
+
