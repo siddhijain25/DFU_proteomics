@@ -1,8 +1,9 @@
 ---
-title: "4b"
+title: "pairwise"
 output: html_document
 date: "2023-06-22"
 ---
+#This file creates the comparison plots between the three workflows
 ```{r setup, include=FALSE} 
 knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
 ```
