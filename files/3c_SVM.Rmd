@@ -1,0 +1,310 @@
+---
+title: "3c"
+output: html_document
+date: "2023-06-22"
+---
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r libraries}
+require("dplyr")
+require("tidyr")
+require("tidyverse")
+require("readxl")
+require("readr")
+require("tibble")
+require("xlsx")
+require("ggplot2")
+require("caret")
+require("missForest")
+require("MLeval")
+
+
+save.data = F
+save.plots = F
+
+# RF metrics
+train_method <- "cv" #"repeatedcv"
+train_cvfolds <- 10 #50
+train_repeats <- 10
+
+set.seed(123)
+```
+
+```{r importing data files}
+annotation <- read.delim("data/proteinGroups_annotated.txt")
+annotation <- annotation[-1, ]
+
+cox_filter <- read_excel("output_files/data/3b_cox_adjusted.xlsx")
+
+raw_data <- read_excel("output_files/data/3a_CLR_data.xlsx") %>% 
+  mutate(Days_to_heal_cox = replace(Days_to_heal, 
+                                     is.na(Days_to_heal),                       #replacing NA values with random value
+                                     sample(seq(180, 250, 1),                   #between 180 and 250
+                                            sum(is.na(Days_to_heal)), 
+                                            replace = TRUE)),
+         .before="A0A024R0T9;K7ER74;P02655;Q6P163;V9GYJ8") %>% 
+  mutate(Diabetes_Type = as.factor(Diabetes_Type),
+         Gender = as.factor(Gender)) 
+
+columns_to_onehot <- c("Diabetes_Type", "Gender")
+
+raw_data_encoded <- dummyVars(" ~ .",data = raw_data[, columns_to_onehot], keepUnusedLevels = TRUE)
+raw_data_encoded <- data.frame(predict(raw_data_encoded, raw_data[, columns_to_onehot])) %>% 
+  cbind(raw_data %>% select(-columns_to_onehot))
+
+columns_to_standardize <- c("Age", "Diabetes_Duration", "BMI", "HBA1C", "Triglyceride")
+
+raw_data_final <- raw_data_encoded %>%
+  mutate(across(all_of(columns_to_standardize), scale))
+```
+
+```{r}
+cox_signif <- cox_filter %>% 
+  filter(p.value.adjusted<0.1) %>% 
+  select(term) %>% 
+  unlist(use.names = F)
+
+RF_data <- raw_data_final %>% 
+  select(one_of(cox_signif)) 
+
+RF_data_reg <- cbind(raw_data_final[1:15], RF_data) %>% 
+  select(-c(Healing_time, Healing, Days_to_heal, avg_TBI, ID_Nr))
+
+RF_data_classif <- cbind(raw_data_final[1:15], RF_data) %>% 
+  select(-c(Healing, Days_to_heal, avg_TBI, ID_Nr, Days_to_heal_cox)) %>% 
+  mutate(Healing_time = as.factor(Healing_time))
+```
+
+# Regression 
+
+```{r}
+set.seed(123)
+RF_data_imputed <- missForest(RF_data_reg,verbose = TRUE, xtrue = RF_data_reg)
+OOB <- RF_data_imputed$OOBerror
+RF_data_imputed <- RF_data_imputed$ximp
+```
+```{r}
+set.seed(123)
+inTraining <- createDataPartition(RF_data_imputed$Days_to_heal_cox, p = .55, list = FALSE)
+training <- RF_data_imputed[ inTraining,]
+testing  <- RF_data_imputed[-inTraining,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method = train_method,
+                           number = train_cvfolds)
+                           ## repeated ten times
+                           #repeats = train_repeats)
+
+grid <- expand.grid(cost = seq(from = 0, to = 1, by = 0.1) ,
+                    Loss = c("L1","L2") )
+```
+
+```{r}
+set.seed(123)
+trained_model <- train(Days_to_heal_cox ~ ., data = training, 
+                 method = "svmLinear3", 
+                 trControl = fitControl,
+                 tuneGrid = grid,
+                 verbose = F)
+
+trained_model
+plot(trained_model)
+```
+
+```{r}
+testing$obs <- testing$Days_to_heal_cox
+testing$pred <- predict(trained_model,testing)
+testing$residuals <- testing$obs - testing$pred
+
+postResample(pred = testing$pred, obs = testing$obs)
+```
+
+# Classification
+
+```{r}
+set.seed(123)
+RF_data_imputed <- missForest(RF_data_classif,verbose = TRUE, xtrue = RF_data_classif)
+OOB <- RF_data_imputed$OOBerror
+RF_data_imputed <- RF_data_imputed$ximp
+```
+
+
+```{r}
+set.seed(123)
+inTraining <- createDataPartition(RF_data_imputed$Healing_time, p = .55, list = FALSE)
+training <- RF_data_imputed[ inTraining,]
+testing  <- RF_data_imputed[-inTraining,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method = train_method,
+                           number = train_cvfolds,
+                           ## repeated ten times
+                           repeats = train_repeats)
+
+grid <- expand.grid(cost = seq(from = 0, to = 1, by = 0.1) ,
+                    Loss = c("L1","L2") )
+```
+
+```{r}
+set.seed(123)
+trained_model <- train(Healing_time ~ ., data = training, 
+                 method = "svmLinear3", 
+                 trControl = fitControl,
+                 tuneGrid = grid,
+                 verbose = F)
+trained_model
+plot(trained_model)
+```
+
+```{r}
+testing$obs <- testing$Healing_time
+testing$pred <- predict(trained_model,testing)
+testing$residuals <- testing$obs - testing$pred
+
+postResample(pred = testing$pred, obs = testing$obs)
+```
+
+
+```{r}
+confusionMatrix(data = testing$pred, reference = testing$obs, mode = "prec_recall")
+```
+
+```{r}
+multiClassSummary(testing, lev = levels(testing$Healing_time))
+```
+
+# All data model
+```{r importing data files}
+annotation <- read.delim("data/proteinGroups_annotated.txt")
+annotation <- annotation[-1, ]
+
+raw_data <- read_excel("output_files/data/3a_CLR_data.xlsx") %>% 
+  mutate(Days_to_heal_cox = replace(Days_to_heal, 
+                                     is.na(Days_to_heal),                       #replacing NA values with random value
+                                     sample(seq(180, 250, 1),                   #between 180 and 250
+                                            sum(is.na(Days_to_heal)), 
+                                            replace = TRUE)),
+         .before="A0A024R0T9;K7ER74;P02655;Q6P163;V9GYJ8") %>% 
+  mutate(Diabetes_Type = as.factor(Diabetes_Type),
+         Gender = as.factor(Gender)) 
+
+columns_to_onehot <- c("Diabetes_Type", "Gender")
+
+raw_data_encoded <- dummyVars(" ~ .",data = raw_data[, columns_to_onehot], keepUnusedLevels = TRUE)
+raw_data_encoded <- data.frame(predict(raw_data_encoded, raw_data[, columns_to_onehot])) %>% 
+  cbind(raw_data %>% dplyr::select(-columns_to_onehot))
+
+columns_to_standardize <- c("Age", "Diabetes_Duration", "BMI", "HBA1C", "Triglyceride")
+
+raw_data_final <- raw_data_encoded %>%
+  mutate(across(all_of(columns_to_standardize), scale))
+```
+
+```{r}
+RF_data_reg <- raw_data_final %>% 
+  dplyr::select(-c(Healing_time, Healing, Days_to_heal, avg_TBI, ID_Nr))
+
+RF_data_classif <- raw_data_final %>% 
+  dplyr::select(-c(Healing, Days_to_heal, avg_TBI, ID_Nr, Days_to_heal_cox)) %>% 
+  mutate(Healing_time = as.factor(Healing_time))
+```
+
+# Regression 
+
+```{r}
+set.seed(123)
+RF_data_imputed <- missForest(RF_data_reg,verbose = TRUE, xtrue = RF_data_reg)
+OOB <- RF_data_imputed$OOBerror
+RF_data_imputed <- RF_data_imputed$ximp
+```
+
+```{r}
+set.seed(123)
+inTraining <- createDataPartition(RF_data_imputed$Days_to_heal_cox, p = .55, list = FALSE)
+training <- RF_data_imputed[ inTraining,]
+testing  <- RF_data_imputed[-inTraining,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method = train_method,
+                           number = train_cvfolds)
+                           ## repeated ten times
+                           #repeats = train_repeats)
+
+grid <- expand.grid(cost = seq(from = 0, to = 1, by = 0.1) ,
+                    Loss = c("L1","L2") )
+```
+
+```{r}
+set.seed(123)
+trained_model <- train(Days_to_heal_cox ~ ., data = training, 
+                 method = "svmLinear3", 
+                 trControl = fitControl,
+                 tuneGrid = grid,
+                 verbose = F)
+
+trained_model
+plot(trained_model)
+```
+```{r}
+testing$obs <- testing$Days_to_heal_cox
+testing$pred <- predict(trained_model,testing)
+testing$residuals <- testing$obs - testing$pred
+
+postResample(pred = testing$pred, obs = testing$obs)
+```
+# Classification
+
+```{r}
+set.seed(123)
+RF_data_imputed <- missForest(RF_data_classif,verbose = TRUE, xtrue = RF_data_classif)
+OOB <- RF_data_imputed$OOBerror
+RF_data_imputed <- RF_data_imputed$ximp
+```
+
+
+```{r}
+set.seed(123)
+inTraining <- createDataPartition(RF_data_imputed$Healing_time, p = .55, list = FALSE)
+training <- RF_data_imputed[ inTraining,]
+testing  <- RF_data_imputed[-inTraining,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method = train_method,
+                           number = train_cvfolds)
+                           ## repeated ten times
+                           #repeats = train_repeats)
+
+grid <- expand.grid(cost = seq(from = 0, to = 1, by = 0.1) ,
+                    Loss = c("L1","L2") )
+```
+
+```{r}
+set.seed(123)
+trained_model <- train(Healing_time ~ ., data = training, 
+                 method = "svmLinear3", 
+                 trControl = fitControl,
+                 tuneGrid = grid,
+                 verbose = F)
+trained_model
+plot(trained_model)
+```
+
+```{r}
+testing$obs <- testing$Healing_time
+testing$pred <- predict(trained_model,testing)
+testing$residuals <- testing$obs - testing$pred
+
+postResample(pred = testing$pred, obs = testing$obs)
+```
+
+```{r}
+confusionMatrix(data = testing$pred, reference = testing$obs, mode = "prec_recall")
+```
+
+```{r}
+multiClassSummary(testing, lev = levels(testing$Healing_time))
+```
+
+
