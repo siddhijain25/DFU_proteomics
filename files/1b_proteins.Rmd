@@ -1,5 +1,5 @@
 ---
-title: "2a"
+title: "1b"
 output: html_document
 date: "2023-05-26"
 ---
@@ -27,7 +27,7 @@ save.plots = F
 ```
 
 ```{r importing data files}
-data_original <- read_tsv("C:/Users/SJAI0003/Desktop/Siddhi_master_project/Proteomics_MaxQuant_RUC/all_files_proteomics/txt/proteinGroups.txt")
+data_original <- read_tsv("data/proteinGroups.txt")
 ```
 
 ```{r}
@@ -45,14 +45,61 @@ data_original_plot %>%
 ```
 
 ```{r}
-ggplot(data_original_plot, aes(x = LFQ, after_stat(count), colour = ID)) +
-  geom_density() +
-  theme(legend.position = "none")
+set.seed(123)
+protein_data_modified <- data_original %>% 
+  dplyr::select(ProteinID="Protein IDs", starts_with("LFQ intensity")) %>% 
+  dplyr::rename_all(gsub, pattern="LFQ intensity ", replacement="") %>% 
+  rotate_df(cn=TRUE) %>% #, rn='ID_Nr'
+  dplyr::select(where(~ any(. != 0))) 
+
+na_data <- replace(protein_data_modified, protein_data_modified==0, NA)
+
+```
+
+
+```{r}
+pMiss_row <- function(x){(rowSums(x==0)/ncol(x))*100}
+pMiss_col <- function(x){(colSums(x==0)/nrow(x))*100}
+```
+```{r missing percentage}
+#Missing percentage in each row
+pMiss_row(protein_data_modified)
 ```
 
 ```{r}
-ggplot(data_original_plot, aes(x = LFQ, after_stat(count), colour = ProteinID)) +
-  geom_density() +
-  theme(legend.position = "none")
+missing.values <- na_data %>%
+    gather(key = "key", value = "val") %>%
+    mutate(is.missing = is.na(val)) %>%
+    group_by(key, is.missing) %>%
+    summarise(num.missing = n()) %>%
+    filter(is.missing==T) %>%
+    select(-is.missing) %>%
+    arrange(desc(num.missing)) 
+```
+
+```{r}
+row.plot <- na_data %>%
+  mutate(id = row_number()) %>%
+  gather(-id, key = "key", value = "val") %>%
+  mutate(isna = is.na(val)) %>%
+  ggplot(aes(key, id, fill = isna)) +
+    geom_raster(alpha=0.8) +
+    scale_fill_manual(name = "",
+        values = c('steelblue', 'tomato3'),
+        labels = c("Present", "Missing")) +
+    #scale_x_discrete(limits = levels) +
+    labs(x = "Protein number",
+           y = "Subject ID", title = "Missing values in proteins") +
+   theme(axis.text.y=element_blank(),
+         axis.ticks.y=element_blank()) +
+    coord_flip()
+
+if(save.plots) ggsave(row.plot, 
+                      filename = "output_files/figures/1b/missingness.png",
+                      width = 10, 
+                      height = 7, 
+                      device='tiff', 
+                      dpi=700)
+
 ```
 

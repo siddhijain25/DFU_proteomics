@@ -99,76 +99,6 @@ if(save.data) write.xlsx(as.data.frame(joined_table_final),
 ```
 
 
-```{r}
-s_summary <- function(x) {
-  if (is.numeric(x)) {
-    in_rows(
-      "n" = rcell(sum(!is.na(x)), format = "xx"),
-      "Mean (sd)" = rcell(c(mean(x, na.rm = TRUE), sd(x, na.rm = TRUE)), format = "xx.xx (xx.xx)"),
-      "IQR" = rcell(IQR(x, na.rm = TRUE), format = "xx.xx"),
-      "min - max" = rcell(range(x, na.rm = TRUE), format = "xx.xx - xx.xx"),
-      "median" = rcell(median(x, na.rm = TRUE), format = "xx.xx")
-      
-    )
-  } else if (is.factor(x)) {
-    vs <- as.list(table(x))
-    do.call(in_rows, lapply(vs, rcell, format = "xx"))
-  } else {
-    stop("type not supported")
-  }
-}
-```
-
-```{r}
-set.seed(123)
-summary_data <- joined_table_final %>% 
-  mutate(Days_to_heal = replace(Days_to_heal, 
-                                     is.na(Days_to_heal),                       #replacing NA values with random value
-                                     sample(seq(180, 250, 1),                   #between 180 and 250
-                                            sum(is.na(Days_to_heal)), 
-                                            replace = TRUE)))
-  
-  
-  
-summary_lyt <- basic_table(show_colcounts = TRUE) %>%
-  split_cols_by(var = "Healing_time") %>%
-  analyze(c("Days_to_heal",	#"Insulin", 
-         "Diabetes_Type",	"Gender", "Age",	"Diabetes_Duration", 
-         "BMI",	"HBA1C",	"avg_TBI", "Triglyceride"), afun = s_summary)
-
-summary_tbl <- build_table(summary_lyt, summary_data)
-summary_tbl 
-```
-```{r baseline stats}
-shapiro.test(summary_data$Age)
-kruskal.test(Age ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$BMI)
-kruskal.test(BMI ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$Diabetes_Duration)
-kruskal.test(Diabetes_Duration ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$Days_to_heal)
-kruskal.test(Days_to_heal ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$HBA1C)
-kruskal.test(HBA1C ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$avg_TBI)
-kruskal.test(avg_TBI ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$Triglyceride)
-kruskal.test(Triglyceride ~ Healing_time , data = summary_data)
-
-shapiro.test(summary_data$Gender)
-chisq.test(summary_data$Gender,summary_data$Healing_time)
-
-shapiro.test(summary_data$Diabetes_Type)
-chisq.test(summary_data$Diabetes_Type,summary_data$Healing_time)
-```
-
-
 ```{r changing data types}
 joined_table <- joined_table %>% 
   mutate_at(c('Healing_time', "Healing", "Amputation", "Lost_to_follow_up", 
@@ -217,7 +147,7 @@ joined_table$Healing_time <- factor(joined_table$Healing_time,
 ```
 
 
-```{r}
+```{r summary statistics}
 #https://finalfit.org/articles/finalfit.html
 require("finalfit")
 

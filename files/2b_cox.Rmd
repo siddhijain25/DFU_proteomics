@@ -60,17 +60,6 @@ event_data <- raw_data %>%
 
 
 
-#missforest on event_data
-#new <- event_data %>% 
-#  dplyr::select(-c(Healing_time, Healing, avg_TBI, ID_Nr, event_all)) %>% 
-#  as.data.frame()
-
-#set.seed(123)
-#RF_data_imputed <- missForest(xmis=new,verbose = TRUE, xtrue = new)
-#OOB <- RF_data_imputed$OOBerror
-#event_data <- RF_data_imputed$ximp
-
-
 protein_names_cox <- names(event_data[-c(1:13)])      #8                          #list of protein names
 
 listOfModels_cox <- vector("list", length(protein_names_cox))                   #empty vector for models
@@ -93,12 +82,12 @@ plot <- ggplot(event_data,
        labs(title = paste("Boxplots for simulated healing time categorized by Healing type")) + 
        guides(fill = "none")
 
-ggsave(filename = paste0("output_files/figures/1a/2_boxplot_healing_simulated.png"), 
-  plot,
-  width = 10, 
-  height = 7, 
-  device='tiff', 
-  dpi=700)
+if(save.plots)  ggsave(filename = paste0("output_files/figures/1a/2_boxplot_healing_simulated.png"),
+                        plot,
+                        width = 10, 
+                        height = 7, 
+                        device='tiff', 
+                        dpi=700)
 ```
 
 
@@ -163,7 +152,7 @@ for (i in 1:length(protein_names_cox)) {
 } 
 ```
 
-```{r ignore}
+```{r ignore, eval=FALSE, include=FALSE}
 coxph(SurvObj~CON__P00761+Age+Gender+Triglyceride+Diabetes_Type+Diabetes_Duration+HBA1C+BMI, data = event_data)
 
 #coef — estimated hazard coefficient on the log scale
@@ -188,8 +177,7 @@ results_cox_adjusted <- results_cox_adjusted %>%
 results_cox_adjusted <- results_cox_adjusted %>%
   mutate(UniProt.names = ifelse(term == "P0DOY2", "IGLC2_HUMAN", UniProt.names))
  
-#results_cox_adjusted <- results_cox_adjusted %>%
- # mutate(across(Protein.name:GOBP.name, ~ ifelse(term == "P0DOY2", "IGLC2_", .)))
+
 
 ```
 
@@ -218,6 +206,9 @@ if(save.data) write.xlsx(as.data.frame(uniprot_names),
 
 ```{r corrplot}
 require("corrplot")
+
+# Correlation plot for proteins vs proteins
+
 corplot_list <- results_cox_filtered$term
 corplot_gene_names <- str_extract(results_cox_filtered$Gene.name,"[^;]+")
 
@@ -225,7 +216,7 @@ corplot_data <- raw_data[, corplot_list] %>%
   set_names(corplot_gene_names)
 
 M<-cor(corplot_data, method = "spearman")
-#corrplot(M, method="color",  order="hclust")
+
 png("output_files/figures/2b/2b_corr_proteins.png", width=7.5, height=7.5, units = "in", res = 300)
 gplots::heatmap.2(M,
                   revC = TRUE,
@@ -237,6 +228,8 @@ gplots::heatmap.2(M,
 dev.off()
 ```
 ```{r}
+# Correlation plot for proteins vs covariates
+
 covariates <- c("Age","Gender", "Triglyceride", "Diabetes_Type", "Diabetes_Duration", "HBA1C", "BMI")
 corplot_data <- raw_data[, corplot_list] %>% 
   set_names(corplot_gene_names) %>% 
@@ -307,10 +300,6 @@ if(save.plots) ggsave(plot,
                       height = 7, 
                       device='tiff', 
                       dpi=100)
-ggsave(plot,
-       filename = "output_files/figures/2b/2b_volcano_plot.png",
-       width = 7.5, 
-       height = 4.5)
 ```
 
 ```{r KM survival curves - covariates}
